@@ -1,0 +1,637 @@
+---
+title: "Final Project Draft"
+output: html_document
+---
+Name: Neil Bhutada, Eva Lo, Cecheng Chen
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, message=FALSE)
+```
+
+```{r packages, include=FALSE}
+library(tidyverse)
+library(ggplot2)
+library(stringr)
+library(dplyr)
+library(lubridate)
+library(modelr)
+library(sf)
+library(rgeos)
+library(rnaturalearthdata)
+library(rnaturalearth)
+source("../scripts/viridis.R")
+source("../scripts/ggprob.R")
+```
+
+```{r clean-up, include=FALSE}
+# read data set and select columns 
+economy <- read_csv("economy.csv")
+results <- read_csv("results.csv") %>% 
+  select(result_1, result_2, event_id, match_id, match_winner, `_map`)
+player <- read_csv("players.csv") %>% 
+  select(match_id, event_id, player_id, country, player_name, map_1, map_2, map_3, rating, kills, assists, deaths, hs, rating, team, opponent, event_name) %>% 
+  pivot_longer(cols=c(map_1, map_2, map_3), values_to="_map")
+
+# merge all three data sets together and reorganizing the columns 
+all <- economy %>% 
+  inner_join(results, by=c("match_id", "event_id", "_map"), keep=FALSE) %>% 
+  inner_join(player, by=c("match_id", "event_id", "_map"), keep=FALSE) %>% 
+  rename(player_team=team, 
+         player_opponent=opponent, 
+         round=name) %>% 
+  mutate(round=str_sub(round, -1, -1)) %>% 
+  select(date, event_id, event_name, match_id, round, match_winner, result_1, result_2, everything())
+
+
+```
+> Introduction
+
+You may be wondering, "why should I read this report?" Counter-Strike: Global Offensive (CS:GO) is a well known shooting game, which is competed professionally by teams around the world. In a game, a team can either be a counter terrorist (CT) team or terrorist (T) team. The terrorist teams plants bombs at various places, and the counter terrorists tries to defuse them. And, of course, both the teams will also try to kill each other. Well, these CS:GO tournaments, are really really huge tournaments. Players trains for about 12 hours a day to do well and are from over 40 countries. It is streamed online on popular platforms like Twitch and YouTube, with more than 1 million viewers. And, of course, the winner of these CS:GO tournaments earn around 20 million dollars!  We are interested in learning what factors have contributed to the winning of a team within these professional matches and how these could be applied. For doing these we are going to compare the top 10 teams with the other teams in the tournaments. There are major questions that gamers of CS:GO have. One, does the starting position (being CT or T team) matter? Two, what are the kind of average ratings (meaning of this term is described in later sections) do the top teams have, and how does this metric affect winning rates? How do the head shot rates affect the winning rates for the top 10 teams and the rest of the teams? How are the demographics of the players who belong to top 10 teams compare to the demographics of the players from the other teams?  After looking at these questions, we found that, **having higher average rating and more european demographic of the players are important factors that lead to an increased chance of winning in a CS:GO match, but not the starting positions of each team and the average head shot rate of the teams.**
+
+
+>Background
+ 
+Our top 10 teams data is from the Pro ESL's Gaming website, which is the organization responsible for tracking and hosting video game tournaments. Hence our data about the top 10 teams is trust worthy.
+
+To conduct the analysis, we combined three different data sets by their match id’s, including players, economy, and results. These were downloaded from kaggle. The players data set includes information about the players ratings, wins, teams, country they are representing, and style of playing. The economy dataset includes information about the starting positions of the teams, and the weapon points they gained for each round. The results data set mentions the matches, the opponents, and match winners. The reason the reader can trust our data is because the data is officially licensed by 'NC-SA 4', which is an organization that checks for accuracy and validity of data on Kaggle. We cleaned up the data set by cutting down the columns and filtering based on the events/tournaments the top 10 teams have participated in.
+
+The way the data set was collected were by official tournament organizers and automated systems used in these tournaments to track analytics about the players.
+
+For the rest of the report, we will be looking at how the starting positions of the team affect the probability of winning, analyze the relationships between the winning rate and match metrics like ratings, head shots, etc. and study the demographics of the players. All of this will be done in comparison with the top 10 teams. The top 10 teams are:
+
+1. Astralis 
+2. Natus Vincere
+3. G2 Esports (abbr.G2)
+4. Team Liquid (abbr.Liquid)
+5. FaZe Clan (abbr.FaZe)
+6. fnatic
+7. Ninjas in Pyjamas (abbr.NiP)
+8. mousesports 
+9. Team Vitality (abbr.Vitality)
+10. SK Gaming (abbr.SK)
+
+### Variables 
+- date of the match 
+- match id 
+- event id 
+- name of team 1
+- name of team 2
+- number of rounds to be played between team 1 and team 2 within a match
+- map chosen for the round 
+- starting position of team 1, either counter terrorism or terrorism 
+- starting position of team 2, either counter terrorism or terrorism
+- equipment values of team 1 for each mini-rounds (rounds within round)
+- equipment values of team 2 for each mini-rounds (rounds within round),  
+- winner of each mini-rounds (rounds within round)
+- number of mini-rounds (rounds within round) won by team 1 
+- number of mini-rounds (rounds within round) won by team 1 
+- winner of that round combining all mini-rounds, either 1 or 2, representing team 1 and team 2 
+- winner of each round. ('Team 1' or 'Team 2' are the values in this colums.)
+- player id
+- country of the player 
+- name of the player 
+- rating 
+- number of kills by the player in the round 
+- number of assists by the player in the round
+- number of deaths by the player in the round
+- number of headshots by the player in the round
+- team of the player 
+- opponent team of the player 
+- name of the event 
+- round number of the match based on best_of 
+
+### Background information and unusual factors 
+- The way we calculated the winning rate: 
+$$ \text{Total number of rounds won by a team} \div \text{Total number of rounds played by a team}$$ 
+- There are multiple repeated matches across the rows to list all the players involved. One player per row. 
+- Each round has a total of 30 mini-rounds. The team that wins 16 mini-rounds first wins the round. Hence, we assumed that the rounds with missing values ended early without actually competing for all 30 mini-rounds. 
+
+### Citation
+1. Machado, Mateus D. (2020). Economy.csv (Version 1) [Data Set]. Retrieved from ^[https://www.kaggle.com/mateusdmachado/csgo-professional-matches?select=economy.csv]
+2. Machado, Mateus D. (2020). Players.csv (Version 1) [Data Set]. Retrieved from ^[https://www.kaggle.com/mateusdmachado/csgo-professional-matches?select=players.csv]
+3. Machado, Mateus D. (2020). Results.csv (Version 1) [Data Set]. Retrieved from ^[https://www.kaggle.com/mateusdmachado/csgo-professional-matches?select=results.csv]
+4. The top 10 teams, retrieved from: ^[https://pro.eslgaming.com/worldranking/csgo/]
+
+```{r clean-up continued, include=FALSE}
+top10_teams <- c("Astralis", "Natus Vincere", "G2", "Liquid", "FaZe", "fnatic", "NiP", "mousesports", "Vitality", "SK")
+ 
+# distinct rounds - to remove duplicated round-information due to the list of players played in each team/round (before final)
+distinct_round <- all %>% 
+  select(1:104) %>% 
+  distinct()
+ 
+# all events that top 10 are involved in (events that we're focusing on)
+events <- distinct_round %>% 
+  filter(team_1 %in% top10_teams | team_2 %in% top10_teams) %>% 
+  select(event_name) %>% 
+  distinct() %>% 
+  pull(event_name)
+ 
+# final - all observations that are in the events found above 
+all <- all %>% 
+  filter(event_name %in% events) %>% 
+  mutate(round_winner=case_when(result_1<result_2 ~ "2", 
+                                result_1>result_2 ~ "1")) %>% 
+  select(date, event_id, event_name, match_id, round, match_winner, round_winner, result_1, result_2, everything()) 
+ 
+# top 10 final - filtering the final data set to include only the observations played by top 10
+all_top10 <- all %>% 
+  filter(team_1 %in% top10_teams | team_2 %in% top10_teams)
+ 
+# non-top 10 final - filtering the final data set to exclude the observations played by top 10 
+all_non_top10 <- all %>% 
+  filter(!(team_1 %in% top10_teams | team_2 %in% top10_teams))
+```
+
+
+```{r, winning rate, include=FALSE}
+# distinct rounds - to remove duplicated round-information due to the list of players played in each team/round (after final)
+all_distinct_round <- all %>% 
+  select(1:105) %>% 
+  distinct()
+ 
+# to count the total number of rounds won by each team
+team_winning_count <- all_distinct_round %>% 
+  mutate(winning_team=case_when(round_winner=="1" ~ team_1, 
+                                round_winner=="2" ~ team_2)) %>% 
+  group_by(winning_team) %>% 
+  summarise(winning_count=n())
+ 
+# to count the total number of rounds played by each team
+t1 <- all_distinct_round %>% select(team_1) %>% rename(team=team_1) 
+t2 <- all_distinct_round %>% select(team_2) %>% rename(team=team_2) 
+team_rounds_count <- bind_rows(t1, t2) %>% count(team)
+ 
+# to get the winning rate based on the number of rounds played
+winning_rate <- team_winning_count %>% 
+  full_join(team_rounds_count, by=c("winning_team"="team")) %>% 
+  # replacing winning_count NA with zero - zero number of rounds won
+  mutate(winning_count=replace_na(winning_count, 0)) %>% 
+  mutate(winning_rate=winning_count/n) %>% 
+  arrange(desc(winning_rate))
+winning_rate
+```
+
+> Analysis 
+
+### Starting Positions
+
+##### Does the starting positions of the teams affect the chance of winning? 
+
+```{r}
+options(tibble.print_max = Inf)
+options(tibble.width = Inf)
+```
+
+##### Hypothesis Test
+
+There are two starting positions for the teams: counter terrorism (ct) and terrorism (t). The following data frame shows the number of rounds won, the number of rounds played, and winning rate, at each position. 
+
+```{r}
+# proportion of winning at ct and t for all teams
+winning_rate_position <- all_distinct_round %>% 
+  mutate(winning_position=case_when(round_winner=="1" ~ t1_start, 
+                                    round_winner=="2" ~ t2_start)) %>%
+  group_by(winning_position) %>% 
+  summarise(n=n()) %>% 
+  summarise(winning_position=winning_position, rounds_won=n, total=sum(n), winning_rate=n/total) %>% 
+  drop_na()
+winning_rate_position
+```
+
+We would like to examine whether there's a difference between the winning rates of the teams starting at different positions. We could do this by conducting a hypothesis test. The statistical model would be binomial, where $X$ equals to the number of winning rounds. 
+
+Binomial statistical model would be suitable because there are only two possible outcomes, either winning or losing the rounds. We assume that the rounds are independent, the total number of rounds in the event is fixed, and the probability of winning in these two starting positions could be represented by $p_{ct}$ and $p_{t}$. 
+
+Since the probability of winning at both starting positions should sum up to one, and the only case in which there is no difference between the two would be when $p_{ct}$ and $p_{t}$ equals to 0.5, we could simply conduct a hypothesis test on one of the probability. In this case, we have chosen $p_{ct}$. 
+
+$$H_0: p_{ct} = 0.5$$
+$$H_a: p_{ct} \neq 0.5$$
+
+Under null hypothesis: 
+
+$$X \sim \text{Binomial} \space (7687,0.5)$$
+
+```{r}
+p_val <- pbinom(3883-1, 7687, 0.5, lower.tail=FALSE)*2
+```
+
+The p-value appears to be `r p_val`, which is larger than 0.05 and 0.01, suggesting that it is not statistically significant at any of the levels of significance. Hence, we fail to reject the null hypothesis and conclude that the probability of winning when playing as counter terrorism could be 0.5. As a result, the probability of winning could be the same even when teams start at different positions. In short, starting positions may not be a determining factor that affects the chance of winning.  
+
+##### Confidence Intervals 
+
+To visualize the results above, we could plot the confidence intervals. 
+
+```{r}
+# 95 percent confidence interval 
+ci_95 <- winning_rate_position %>% 
+  mutate(se=sqrt((winning_rate*(1-winning_rate))/total), 
+         lower=winning_rate-(qnorm(0.975)*se), 
+         upper=winning_rate+(qnorm(0.975)*se))
+
+ggplot() + 
+geom_segment(ci_95, mapping=aes(x=lower, xend=upper, y=winning_position, yend=winning_position)) +
+geom_point(ci_95, mapping=aes(x=winning_rate, y=winning_position)) +
+geom_vline(xintercept=0.5, color="red", linetype="dashed") +
+ylab("Starting Position") +
+xlab("Probabilities") +
+ggtitle("95% CI: Probabilities of Winning at Each Starting Position")
+
+# 99 percent confidence interval 
+ci_99 <- winning_rate_position %>% 
+  mutate(se=sqrt((winning_rate*(1-winning_rate))/total), 
+         lower=winning_rate-(qnorm(0.995)*se), 
+         upper=winning_rate+(qnorm(0.995)*se))
+
+ggplot() + 
+geom_segment(ci_99, mapping=aes(x=lower, xend=upper, y=winning_position, yend=winning_position)) +
+geom_point(ci_99, mapping=aes(x=winning_rate, y=winning_position)) +
+geom_vline(xintercept=0.5, color="red", linetype="dashed") +
+ylab("Starting Position") +
+xlab("Probabilities") + 
+ggtitle("99% CI: Probabilities of Winning at Each Starting Position")
+```
+
+The 95 percent confidence interval suggest that there's a 95 percent chance that the true winning rate for these teams are within the range shown. The 99 percent confidence interval suggest that there's a 99 percent chance that the true winning rate for these teams are within the range shown. As shown in both of the graphs, the observed winning rate is higher when playing as counter terrorism, compared to terrorism. The confidence interval for counter terrorism is also on the right of terrorism above 0.5, suggesting that the true winning rate of counter terrorism has a higher chance of being above 0.5, compared to terrorism. However, there are still overlaps between these two confidence intervals, which indicates that the winning rate of playing at these two positions could be equal. 
+
+##### Top 10 Teams 
+
+Next, we want to look into the top 10 teams and confirm the result that we obtained above. As shown in the data frame below, the sample sizes are large enough to approximate the binomial distribution to normal distribution. 
+
+```{r}
+knitr::kable(team_rounds_count %>% 
+  filter(team %in% top10_teams) %>% 
+  rename(rounds_played=n)%>%
+    rename(`Rounds Played` = rounds_played, 
+           Team  = team), "html")
+```
+
+We want to compare the probability of winning of the top 10 teams when they played as counter terrorism and terrorism. This could be done by constructing a 95 percent confidence interval for each team at each starting position.
+ 
+```{r}
+# find winning rate and confidence interval of top 10 teams 
+all_top10_distinct_round <- all_top10 %>% 
+  select(1:105) %>% 
+  distinct()
+
+won <- all_top10_distinct_round %>% 
+  mutate(winning_team=case_when(round_winner=="1" ~ team_1, 
+                                round_winner=="2" ~ team_2), 
+         winning_position=case_when(round_winner=="1" ~ t1_start, 
+                                    round_winner=="2" ~ t2_start)) %>% 
+  group_by(winning_team, winning_position) %>% 
+  summarise(rounds_won=n()) %>% 
+  ungroup() %>% 
+  filter(winning_team %in% top10_teams) %>% 
+  rename(team=winning_team, starting_position=winning_position)
+
+t1 <- all_top10_distinct_round %>% 
+  select(team_1, t1_start) %>% 
+  group_by(team_1, t1_start) %>% 
+  rename(team=team_1, starting_position=t1_start) %>% 
+  summarize(n=n()) %>% 
+  ungroup() %>% 
+  filter(team %in% top10_teams)
+
+t2 <- all_top10_distinct_round %>% 
+  select(team_2, t2_start) %>% 
+  group_by(team_2, t2_start) %>% 
+  rename(team=team_2, starting_position=t2_start) %>% 
+  summarize(n=n()) %>% 
+  ungroup() %>% 
+  filter(team %in% top10_teams)
+
+total <- t1 %>% 
+  full_join(t2, by=c("team", "starting_position")) %>% 
+  mutate(total=n.x + n.y) %>% 
+  select(-n.x, -n.y)
+
+top_10_winning_rate <- won %>% 
+  full_join(total, by=c("team", "starting_position")) %>% 
+  mutate(winning_rate=rounds_won/total) %>% 
+  mutate(se=sqrt((winning_rate*(1-winning_rate))/total), 
+         lower=winning_rate-(qnorm(0.975)*se), 
+         upper=winning_rate+(qnorm(0.975)*se)) %>% 
+  select(-se)
+
+top_10_winning_rate
+```
+
+```{r}
+# plot the confidence intervals 
+ct <- top_10_winning_rate %>% 
+  filter(starting_position=="ct")
+t <- top_10_winning_rate %>% 
+  filter(starting_position=="t")
+
+ggplot() + 
+geom_segment(ct, mapping=aes(x=lower, xend=upper, y=as.integer(as.factor(team))-0.15, yend=as.integer(as.factor(team))-0.15, color="ct")) +
+geom_point(ct, mapping=aes(x=winning_rate, y=as.integer(as.factor(team))-0.15, color="ct")) +
+geom_segment(t, mapping=aes(x=lower, xend=upper, y=as.integer(as.factor(team))+0.15
+, yend=as.integer(as.factor(team))+0.15
+, color="t")) +
+geom_point(t, mapping=aes(x=winning_rate, y=as.integer(as.factor(team))+0.15
+, color="t")) +
+geom_vline(xintercept=0.5, color="red", linetype="dashed") +
+scale_y_continuous(breaks=seq(1, 10, 1), labels=ct$team) +
+guides(color=guide_legend("Starting Position")) +
+ylab("Teams") +
+xlab("Probabilities") +
+ggtitle("95% CI: Probabilities of Winning at Each Starting Position By Team")
+```
+
+The confidence interval suggest that there's a 95 percent chance that the true winning rate for these teams are within the range shown. Looking at the graph, it is obvious that about half of the time counter terrorism results in a higher winning rate and about half of the time terrorism results in a higher winning rate. The top 10 teams confirms the result that we obtained in the previous section. 
+
+### Winning rate vs Average rating
+
+Ratings in CS GO is a number that each player receives after every match. The <a href = "https://en.wikipedia.org/wiki/HLTV#:~:text=Rating%202.0,-Rating%202.0%20was&text=KAST%20measures%20the%20percentage%20of,for%20killing%20a%20teammate%2C%20trading"> rating </a> depicts how well the player has performed in the match and is calculated using various factors. The primary factors that influences the rating is the number of kills and assists. Hence, the average of this term shows how important the player is, or the goodness of the player is. 
+
+##### The relationship
+
+To see how influential the ratings are to the winning rate we could use the power law $y = C \times x^\theta$ to identify the relationship ($\theta$ and $C$, but $\theta$ is more important for us) between the winning rate (which will be $y$) and average rating of the teams (which will be $x$).  To find the values of $\theta$ and $C$, we take the $log$ on both sides of the power law equation. We will get $\log y = \log C + \theta \times \log x$. Then using linear regression we can find the value of $\theta$ as $\theta$ is equal to the slope of the regression line. 
+
+```{R}
+q3_1 <- winning_rate%>%
+  select(winning_team, winning_rate)
+  
+
+q3 <- player %>% 
+  select(-name, - `_map`) %>%
+  distinct()%>%
+  filter(event_name %in% events )%>%
+  group_by(team, player_name) %>%
+  summarize(avg_rating = mean(rating)) %>%
+  mutate(type = case_when(
+    team %in% top10_teams ~ "Top 10",
+    T ~ "Rest"
+  ))
+
+q3_2 <- q3 %>%
+  group_by(team) %>%
+  summarize(
+    avg_rating = mean(avg_rating)
+  )
+
+joined <- inner_join(q3_2, q3_1, by = c("team" = "winning_team")) %>%
+  filter(!winning_rate %in% c(0.0)) %>%
+  filter(log(avg_rating)>= -0.2 & log(avg_rating) <= 0.125) %>%
+  filter(log(winning_rate) >= -1.25 & log(winning_rate) <= 0.0)
+
+joined %>%
+  ggplot(aes(x = log(avg_rating), y = log(winning_rate)))+
+           geom_point()+
+           geom_smooth(method = "lm")+
+  xlab("Log of the average rating per team")+
+  ylab("Log of the winning rate per team")+
+  ggtitle(" Winning rate vs average rating per team")
+
+h <- lm(log(winning_rate)~log(avg_rating), data = joined)
+```
+ Since the p value of the t test of the regression line is 3.1e-14 and lesser than 0.05, this implies that the slope is significant. Hence there is a relation between average rating and average winning rate.
+
+And for the reader's reference, you can see the residual plot of the regression line to see how the line in the above scatter plot has fit.
+
+```{R}
+joined %>%
+  add_residuals(h) %>%
+  ggplot(aes(x = log(avg_rating), y = resid))+
+  geom_point()+
+  geom_hline(yintercept = 0)+
+  geom_smooth()+
+  scale_x_continuous(breaks = seq(-0.8, 1.8, by = 0.1))+
+  ggtitle("Residual plot")+
+  xlab("Log of the average rating per team")+
+  ylab("Residuals from the regression line")
+
+```
+
+The residual plot suggests that the fit has been fine because there is some degree of homoscedasticity, and the smooth regression line does not portray a non-linear pattern.  
+
+```{R}
+print(h$coefficients)
+```
+
+Based on the value of the slope, we could imply the relation between average wining rate and average rating is quadratic exponential (because the slope or value of theta is near is 2.0). Thus, a better average rating could drastically affect the team's chances of winning.
+
+So, we could see how the players of the top 10 teams are compared to the other teams by finding the average rating for each time. Then plot a box plot for the two categories (top 10, and non top 10) to compare the quantiles and medians. 
+
+```{R}
+ q3 %>%
+  ggplot( aes(x = type, y = avg_rating, color = type))+
+    geom_boxplot()+
+    geom_hline(yintercept = 0.9654167, color = "purple")+
+    geom_hline(yintercept = 1.072119, color = "yellow")+
+  ggtitle("Box plot for average ratings")+ 
+  ylab("Average rating")+
+  xlab("The type of team")
+
+```
+
+As we can see from this graph, the median average rating of the non-top 10 team players is nearly equal to the lower 25th percentile average rating of the top 10 team players. Similarly the median of the average rating of the top 10 team players is nearly equal to the 75th percentile of the average rating of the non top 10 players.
+
+However, the box plot metric is based on the median of the average rating. As a reader, you would probably be interested in the count of how many players have a particular rating. So a distribution that could give you good idea about the counts per average rating is the  density plot, which is a smoother version of a histogram (follows kernel probability density).
+
+```{R}
+q3%>%  
+ggplot(aes(x = avg_rating, color = type))+
+  geom_density(size = 1.5)+
+  scale_x_continuous(breaks = seq(0, 2.0, by = 0.1))+
+  ggtitle("Density plot of average ratings")+
+  xlab("The type of team")+
+  ylab("Kernel Probability Density")
+```
+
+The yellow line is from the top 10, while the purple line is from the rest of the teams. You can see that plot from the rest of the teams almost follows a normal distribution, where the most popular average rating (or the mode) is at 1.0. Most of the average rating is between 0.4 and 1.4 (because these values are at the ends of the "hill" depicted by the purple line . On the flip side, the average rating for the top 10 teams has a spike at the mode . The mode is somwhere between 1.1 and 1.2, and peaks very high. Most of the players in the top 10 teams have an average rating from 0.6 to 1.4 because they are at the ends of the "mountain" depicted by the yellow line.
+
+### Average Headshot rate vs winning rating
+
+We know the average of rating shows how important the player is, or the goodness of the player is. But we wanted to know the relationship between a teams average headshot rate (wiz. the proportion of kills made with head shots) and winning rating? Or does a professial player's headshot rate affect his status in the e-sports arena? And most importantly, you would intuitively think that the head shot rate would influence the winning rate right because a team would get bonus points after a player makes head shot? Well, that doesn't seem like the case!
+
+To answer this question, we plotted a scatter plot and found the co-relation coefficients between the average winning rate and average head shot rate per team. 
+
+```{R}
+q5_2 <- winning_rate%>%
+  select(winning_team, winning_rate)
+
+q5 <-  player %>% 
+  select(-name, - `_map`) %>%
+  distinct()%>%
+  filter(event_name %in% events )%>%
+  group_by(player_name,team) %>%
+  summarize(avg_head = sum(hs)/sum(kills),
+            avg_rating = mean(rating)) %>%
+  filter(avg_head > 0.1 & avg_head < 0.9) %>%
+  drop_na()
+  
+q5_1 <- q5 %>%
+  group_by(team) %>%
+  summarize(avg_head = mean(avg_head)) 
+
+join <- inner_join(q5_1, q5_2, by = c("team" = "winning_team")) %>%
+  filter(winning_rate > 0.0 & winning_rate < 1.0) %>%
+  mutate(topTen = case_when(
+    team %in% top10_teams ~ "Top 10",
+    TRUE ~ "Rest")) 
+
+ggplot(join, aes(x = avg_head, y = winning_rate, color = topTen))+
+  facet_wrap(~topTen)+
+    geom_point()+
+    geom_smooth(method = "lm")+
+    xlab("the average headshot rate per team")+
+    ylab("the winning rate per team")+
+    ggtitle(" Winning rate vs headshot rate per team")
+
+```
+
+
+```{r}
+
+rest <- join %>% 
+  filter(topTen=="Rest")
+topten <- join %>% 
+  filter(topTen=="Top 10") 
+fit_rest <- lm(rest$winning_rate ~ rest$avg_head)
+fit2_topten <- lm(topten$winning_rate ~ topten$avg_head)
+fit3_both <- lm(join$winning_rate ~ join$avg_head)
+
+extract_lm <- function(x)
+{
+  ceof <- as_tibble(coef(summary(x)), rownames = "parameter") %>% 
+    rename(estimate = Estimate,
+           se = `Std. Error`,
+           t = `t value`,
+           p_value = `Pr(>|t|)`)
+  df <- df.residual(x)
+  
+  final <- tibble(
+    estimated_slope = ceof$estimate[2], 
+    estimated_slope_se = ceof$se[2], 
+    estimated_intercept = ceof$estimate[1], 
+    estimated_intercept_se = ceof$se[1], 
+    df = df
+  )
+  
+  return ( final )
+}
+
+model <- extract_lm(fit_rest) %>% 
+  full_join(extract_lm(fit2_topten)) %>% 
+  full_join(extract_lm(fit3_both)) %>% 
+  mutate(model=c("Rest", "Top 10", "Both")) %>% 
+  select(model, everything())
+
+b_rest <- model$estimated_slope[1]
+b_top10 <- model$estimated_slope[2]
+b_rest_se <- model$estimated_slope_se[1]
+b_top10_se <- model$estimated_slope_se[2]
+se_diff <- sqrt((b_rest_se^2)+(b_top10_se^2))
+tstat <- (b_rest-b_top10)/se_diff
+df <- model$df[1] + model$df[2]
+pval2 = pt(tstat, df, lower.tail=TRUE)*2
+```
+
+To see if both the regression slopes for the top 10 teams and rest of the teams are equivalent (this is the null hypothesis) or not equal (the alternative hypothesis), we conducted a hypothesis test based on the t-scores of the linear model for the slopes. The resulting p_value, `r pval2`, is greater 0.05 and 0.01, suggesting that the difference between the slopes are not statistically significant at any levels of significance. Hence, the relationship between the average headshot rate and the winning rate are the same for Top 10 teams and the rest of the teams in the tournament. 
+
+```{R}
+l<- join %>%
+  group_by(topTen) %>%
+  summarize(
+    Corelation = cor(winning_rate, avg_head)
+  ) %>% rename(`Type of Team` = topTen)
+
+print(l)
+
+t_score <- (l$Corelation[2])*sqrt(8)/sqrt(1 - (l$Corelation[2])^2 )
+t_score2 <- (l$Corelation[1])*sqrt(156)/sqrt(1 - (l$Corelation[1])^2 )
+pVal_1 <- pt(t_score, 8)*2
+pval_2 <- pt(t_score2, 156)*2
+```
+
+Also, as you can see from the scatter plots and the correlation coefficient values (which are very close to zero for both the top 10 and non top 10 teams), the headshot rate has no effect on the winning rate because the correlation between the head shot and the average winning rate are really close to zero. To confirm if they are close to zero we conducted a hypothesis test where the t test statistic for the correlation coefficient is $r\sqrt{n-2}/\sqrt{1-r^2}$. " $n-2$ " is the degree of freedom, and $r$ is correlation coefficient. The null hypothesis for this test is $r = 0$ and the alternate hypothesis $r  \neq 0$. We saw that the p values for the top 10 teams and non-top 10 teams are respectively `r pVal_1` and `r pval_2`. Since the p values are higher than 0.05, the **null hypotheis** is **not rejected.**   Thus if a player makes more head shots per kills, it does not imply that it would increase the chances of winning for the team.
+
+### Player demographics
+
+Since there are teams from all over the world (and there are also multiple teams from a single country) we wanted to see where the players from the top 10 teams came from, and where the players of the non-top 10 teams were from. By intuition, many would say that the higher proportion of the top 10 players would come from the US because most of the players in the tournaments are from the US. However, as you can see below that is not the case. 
+
+```{R}
+q4 <- player %>% 
+  select(-name, - `_map`) %>%
+  distinct() %>%
+  filter(!team %in% top10_teams) %>%
+  filter(event_name %in% events) %>%
+  group_by(team, player_id, country) %>%
+  summarize(
+   n =  n()
+  ) %>% ungroup() %>% 
+  select(team, country) %>%
+  group_by(country) %>%
+  summarize( n = n()) %>%
+  mutate( proportion = n/sum(n)) %>%
+  select(country, proportion) %>%
+  mutate(country = case_when(
+    country == "United States" ~ "United States of America", 
+    T ~ country
+  ))
+theme_set(theme_bw())
+world <- ne_countries(scale = "medium", returnclass = "sf")
+world <- world[world$region_un != "Antarctica",]
+world <- left_join(world,as.data.frame(q4), by = c( "sovereignt" = "country"))
+ggplot(data = world) +
+    geom_sf(aes(fill = proportion))+
+    scale_fill_viridis_c(option = "plasma", trans = "sqrt")+ggtitle("Player demographics of the non top 10 team players")
+```
+
+```{R}
+q4_1 <- player %>% 
+  select(-name, - `_map`) %>%
+  distinct() %>%
+  filter(team %in% top10_teams) %>%
+  filter(event_name %in% events) %>%
+  group_by(team, player_id, country) %>%
+  summarize(
+   n =  n()
+  ) %>% ungroup() %>% 
+  select(team, country) %>%
+  group_by(country) %>%
+  summarize( n = n()) %>%
+  mutate( proportion = n/sum(n)) %>%
+  select(country, proportion) %>%
+  mutate(country = case_when(
+    country == "United States" ~ "United States of America", 
+    T ~ country
+  ))
+
+world <- ne_countries(scale = "medium", returnclass = "sf")
+world <- world[world$region_un != "Antarctica",]
+world <- left_join(world,as.data.frame(q4_1), by = c( "sovereignt" = "country"))
+ggplot(data = world) +
+    geom_sf(aes(fill = proportion))+
+    scale_fill_viridis_c(option = "plasma", trans = "sqrt")+
+  ggtitle("Player demographics of the top 10 team players")
+
+```
+
+
+Most of the top 10 team players seem to come from Sweden, France, and other European countries despite having lower representations in these tournaments. We can also see that alot of players in the non-top 10 teams come from countries like China, and Russia but many of them are not part of the top 10 teams. Surprisingly, despite of France having a lower representaion in the non top 10 teams, their representation is high in the top 10 teams. However, unraveling why the European players seem to be better is out of the scope of this paper. 
+
+
+> Discussion
+
+So in the first part our analysis, we wanted to see if the starting position, either CT or T does affect the winning rate of a team. Simply comparing the observed winning rate between these two starting positions, it is obviously that the winning rate of counter terrorism is higher than the winning rate of terrorism. However, the hypothesis test suggest that the result is not significant. Hence, the higher winning rate that was observed in counter terrorism could just be by random, **suggesting that starting position may not be a determining factor that results in a higher chance of winning. There may be other factors that are affecting the chance of winning, which are explored in the rest of the analysis.**
+
+Thus, in the second part of the analysis, we focused on the relationship between the average ratings of a team and winnning rates and found that there was a positive quadratic exponential relationship between the winning rate and average rating. This implied that **a team having better players who primarily made more kills and assists in the match could increase the teams chance of winning exponentially**. We further proved this by showing the rating differences between the top 10 teams and the rest of the teams via box plots and densitiy plots.
+
+Then,  we wanted to compare the relationship between the head shot rates made by a team and the average winning rate. We found out that there isn't any relationship, and **the head shot rate of the team neither increases or decreases the chances of the team winning because of the corelation coefficient values being near to 0.** This was confirmed by a hypothesis test.
+
+Finally, in the third part of our analysis we saw that most of the top 10 players came from European countries, implying that **european countries produced better players and teams**.
+
+Which leads us to posing our **potential future research question** that **why European players are better than the American players?** Is CS:GO more popular over there. Do the European players train for these tournaments with more seriousness?
+
+A **possible short coming for our analysis** is that we considered the **top 10 teams as a bench mark** for deciding factors that could make a better team and increases chances of a team winning. **This bench mark could be preceived as stern or strict.**
+
+
+> References
+
+
+1. Info about ratings: ^[https://en.wikipedia.org/wiki/HLTV]
+2. Hypothesis test for corretion coefficients: ^[https://online.stat.psu.edu/stat501/lesson/1/1.9]
